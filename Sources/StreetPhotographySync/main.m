@@ -148,10 +148,21 @@ static NSArray<NSString *> *PreferredAlbumNames(void) {
             return;
         }
 
-        NSURL *oldCacheURL = [[cacheURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"CacheOld" isDirectory:YES] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+        NSURL *oldCacheParentURL = [cacheURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"CacheOld" isDirectory:YES];
+        NSURL *oldCacheURL = [oldCacheParentURL URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
         [NSFileManager.defaultManager createDirectoryAtURL:cacheURL.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
-        [NSFileManager.defaultManager moveItemAtURL:cacheURL toURL:oldCacheURL error:nil];
+        [NSFileManager.defaultManager createDirectoryAtURL:oldCacheParentURL withIntermediateDirectories:YES attributes:nil error:nil];
+
+        BOOL hadExistingCache = [NSFileManager.defaultManager fileExistsAtPath:cacheURL.path];
+        if (hadExistingCache && ![NSFileManager.defaultManager moveItemAtURL:cacheURL toURL:oldCacheURL error:&error]) {
+            [self finishWithMessage:[NSString stringWithFormat:@"Could not replace existing cache: %@", error.localizedDescription] success:NO];
+            return;
+        }
+
         if (![NSFileManager.defaultManager moveItemAtURL:stagingURL toURL:cacheURL error:&error]) {
+            if (hadExistingCache) {
+                [NSFileManager.defaultManager moveItemAtURL:oldCacheURL toURL:cacheURL error:nil];
+            }
             [self finishWithMessage:[NSString stringWithFormat:@"Could not install cache: %@", error.localizedDescription] success:NO];
             return;
         }
