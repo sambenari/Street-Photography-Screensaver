@@ -6,6 +6,9 @@
 @property(nonatomic, copy) NSArray<NSURL *> *imageURLs;
 @property(nonatomic) NSUInteger currentImageIndex;
 @property(nonatomic, strong) NSDate *lastAdvance;
+@property(nonatomic, strong) ScreenSaverDefaults *historyDefaults;
+@property(nonatomic, strong) NSMutableArray<NSString *> *recentPhotos;
+@property(nonatomic) NSUInteger activationGeneration;
 @end
 
 @implementation StreetPhotographySaverView
@@ -17,7 +20,6 @@ static NSTimeInterval const StreetPhotographyDisplaySeconds = 8.0;
     if (self) {
         [self setAnimationTimeInterval:1.0 / 30.0];
         [self setupView];
-        [self loadCachedImages];
     }
     return self;
 }
@@ -27,13 +29,28 @@ static NSTimeInterval const StreetPhotographyDisplaySeconds = 8.0;
     if (self) {
         [self setAnimationTimeInterval:1.0 / 30.0];
         [self setupView];
-        [self loadCachedImages];
     }
     return self;
 }
 
 - (BOOL)hasConfigureSheet {
     return NO;
+}
+
+- (void)startAnimation {
+    [super startAnimation];
+    self.activationGeneration++;
+    self.historyDefaults = [ScreenSaverDefaults defaultsForModuleWithName:@"local.codex.StreetPhotographyEmbeddedSaver"];
+    self.recentPhotos = [[self.historyDefaults stringArrayForKey:@"RecentPhotos"] mutableCopy] ?: [NSMutableArray array];
+    self.imageView.image = nil;
+    self.imageView.alphaValue = 1;
+    self.imageURLs = @[];
+    [self loadCachedImages];
+}
+
+- (void)stopAnimation {
+    self.activationGeneration++;
+    [super stopAnimation];
 }
 
 - (void)animateOneFrame {
@@ -118,20 +135,33 @@ static NSTimeInterval const StreetPhotographyDisplaySeconds = 8.0;
 
     NSURL *imageURL = self.imageURLs[self.currentImageIndex];
     self.currentImageIndex = (self.currentImageIndex + 1) % self.imageURLs.count;
+
+    NSImage *image = [[NSImage alloc] initWithContentsOfURL:imageURL];
+    if (!image) {
+        self.lastAdvance = [NSDate date];
+        return;
+    }
+
+    if (!self.isPreview) {
+        [self.recentPhotos removeObject:imageURL.lastPathComponent];
+        [self.recentPhotos addObject:imageURL.lastPathComponent];
+        NSUInteger limit = MIN((NSUInteger)100, self.imageURLs.count - 1);
+        while (self.recentPhotos.count > limit) {
+            [self.recentPhotos removeObjectAtIndex:0];
+        }
+        [self.historyDefaults setObject:self.recentPhotos forKey:@"RecentPhotos"];
+        [self.historyDefaults synchronize];
+    }
     if (self.currentImageIndex == 0) {
         self.imageURLs = [self shuffledURLs:self.imageURLs];
     }
 
-    NSImage *image = [[NSImage alloc] initWithContentsOfURL:imageURL];
-    if (!image) {
-        [self loadCachedImagesIfAvailable];
-        return;
-    }
-
+    NSUInteger generation = self.activationGeneration;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
         context.duration = 1.2;
         self.imageView.animator.alphaValue = 0.0;
     } completionHandler:^{
+        if (generation != self.activationGeneration) { return; }
         self.imageView.image = image;
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
             context.duration = 1.2;
@@ -144,10 +174,22 @@ static NSTimeInterval const StreetPhotographyDisplaySeconds = 8.0;
 - (NSArray<NSURL *> *)shuffledURLs:(NSArray<NSURL *> *)urls {
     NSMutableArray<NSURL *> *shuffled = [urls mutableCopy];
     for (NSUInteger i = shuffled.count; i > 1; i--) {
-        NSUInteger j = SSRandomIntBetween(0, (int)i - 1);
+        NSUInteger j = arc4random_uniform((uint32_t)i);
         [shuffled exchangeObjectAtIndex:i - 1 withObjectAtIndex:j];
     }
-    return shuffled;
+    // Keep recent photos in the cycle, but show unseen photos first.
+    NSUInteger limit = MIN((NSUInteger)100, urls.count > 0 ? urls.count - 1 : 0);
+    NSArray *recent = self.recentPhotos.count > limit
+        ? [self.recentPhotos subarrayWithRange:NSMakeRange(self.recentPhotos.count - limit, limit)]
+        : self.recentPhotos;
+    NSSet *recentSet = [NSSet setWithArray:recent ?: @[]];
+    NSMutableArray *fresh = [NSMutableArray array];
+    NSMutableArray *deferred = [NSMutableArray array];
+    for (NSURL *url in shuffled) {
+        [([recentSet containsObject:url.lastPathComponent] ? deferred : fresh) addObject:url];
+    }
+    [fresh addObjectsFromArray:deferred];
+    return fresh;
 }
 
 - (void)showStatus:(NSString *)message {

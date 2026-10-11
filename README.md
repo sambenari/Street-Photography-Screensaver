@@ -2,6 +2,8 @@
 
 Native macOS screen saver bundle that displays photos from a local cache of the Photos album named `Street Photography`.
 
+Photos are shuffled on every activation and after each complete cycle using system randomness. The saver remembers up to 100 recently displayed photos across sessions and places those later in the next sequence. Each cycle still includes every cached photo; the recent history is reduced for small albums to leave a fresh starting photo. System Settings previews do not update the history.
+
 macOS does not reliably grant Photos access to the legacy screen saver host, so the project includes `Street Photography Sync.app`. That app owns the Photos permission prompt, exports the album to `~/Library/Screen Savers/Street Photography Cache`, embeds that cache into the installed `.saver` bundle, and re-signs it.
 
 ## Build
